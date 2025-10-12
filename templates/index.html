@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instagram Automation Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="login-card">
+                <div class="logo">
+                    <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                        <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                    </svg>
+                </div>
+                <h1>Instagram Auto Post</h1>
+                <p class="subtitle">Локальный инструмент для автоматизации постов</p>
+                
+                <form id="login-form">
+                    <div class="form-group">
+                        <input type="text" id="username" placeholder="Логин Instagram" required>
+                    </div>
+                    <div class="form-group">
+                        <input type="password" id="password" placeholder="Пароль" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Войти</button>
+                </form>
+                
+                <div id="login-error" class="error-message"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="main-app" class="screen">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="nav-brand">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                </svg>
+                <span>Instagram Auto Post</span>
+            </div>
+            <div class="nav-menu">
+                <a href="#" class="nav-link active" data-page="create-post">Генерация Поста</a>
+                <a href="#" class="nav-link" data-page="library">Библиотека</a>
+                <a href="#" class="nav-link" data-page="history">История</a>
+            </div>
+            <div class="nav-user">
+                <span id="connection-status" style="margin-right: 10px; font-size: 12px; color: var(--success);">● Подключено</span>
+                <span id="username-display"></span>
+                <button id="logout-btn" class="btn btn-secondary">Выйти</button>
+            </div>
+        </nav>
+
+        <!-- Page: Create Post (Unified) -->
+        <div id="page-create-post" class="page active">
+            <div class="container">
+                <h2>Генерация Поста</h2>
+                
+                <!-- Main Input -->
+                <div class="card">
+                    <div class="form-group">
+                        <label>О чем должен быть пост?</label>
+                        <textarea id="post-topic" rows="3" placeholder="Например: Путешествие в горы, красивый закат, здоровый завтрак..."></textarea>
+                    </div>
+                    
+                    <!-- Settings Sections -->
+                    <div class="post-settings-container">
+                        <!-- Text Settings -->
+                        <div class="settings-section">
+                            <h3>⚙️ Настройки текста</h3>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label>Размер поста</label>
+                                    <select id="create-post-size">
+                                        <option value="short">Коротко (2-4 предложения)</option>
+                                        <option value="medium" selected>Средний (стандартный пост)</option>
+                                        <option value="long">Длинный (развернутый текст)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>
+                                        <input type="checkbox" id="create-add-hashtags">
+                                        Добавить хештеги
+                                    </label>
+                                </div>
+                                <div class="form-group">
+                                    <label>Количество хештегов</label>
+                                    <input type="number" id="create-hashtag-count" value="5" min="1" max="30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Photo Settings -->
+                        <div class="settings-section">
+                            <h3>📸 Настройки фото</h3>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="auto-prompt" checked>
+                                    Автоматический промпт (AI создаст промпт по теме)
+                                </label>
+                            </div>
+                            <div id="manual-prompt-container" class="form-group" style="display: none;">
+                                <label>Промпт для изображения (на английском)</label>
+                                <textarea id="manual-photo-prompt" rows="2" placeholder="beautiful sunset over mountains, vibrant colors"></textarea>
+                            </div>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label>Размер для Instagram</label>
+                                    <select id="create-photo-preset" onchange="updateCreatePhotoSize()">
+                                        <option value="square">Квадрат (1:1) - пост</option>
+                                        <option value="portrait">Портрет (4:5) - пост</option>
+                                        <option value="story">Сторис (9:16)</option>
+                                        <option value="landscape">Пейзаж (16:9)</option>
+                                        <option value="custom">Свой размер</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Ширина</label>
+                                    <select id="create-photo-width">
+                                        <option value="512">512px</option>
+                                        <option value="768">768px</option>
+                                        <option value="1024" selected>1024px</option>
+                                        <option value="1280">1280px</option>
+                                        <option value="1920">1920px</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Высота</label>
+                                    <select id="create-photo-height">
+                                        <option value="512">512px</option>
+                                        <option value="768">768px</option>
+                                        <option value="1024" selected>1024px</option>
+                                        <option value="1280">1280px</option>
+                                        <option value="1920">1920px</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Модель</label>
+                                    <select id="create-photo-model">
+                                        <option value="flux">Flux (универсальная)</option>
+                                        <option value="flux-realism">Flux Realism (реализм)</option>
+                                        <option value="flux-anime">Flux Anime (аниме)</option>
+                                        <option value="flux-3d">Flux 3D (3D стиль)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Seed (для повторения)</label>
+                                    <input type="number" id="create-photo-seed" placeholder="Случайный">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button id="generate-post-btn" class="btn btn-primary btn-large">🚀 Создать Пост</button>
+                    <div id="create-post-status" class="status-message"></div>
+                </div>
+                
+                <!-- Preview Section -->
+                <div id="post-preview-section" class="preview-section" style="display: none;">
+                    <div class="card">
+                        <div class="preview-header">
+                            <h3>📱 Предпросмотр поста</h3>
+                            <button id="preview-settings-toggle" class="btn btn-secondary">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                    <path d="M12 1v6m0 6v6m5.2-13.8l-4.2 4.2m0 6l4.2 4.2M1 12h6m6 0h6m-13.8-5.2l4.2 4.2m0-6l-4.2 4.2"></path>
+                                </svg>
+                                Настройки
+                            </button>
+                        </div>
+                        
+                        <!-- Preview Settings Panel (Collapsible) -->
+                        <div id="preview-settings-panel" class="preview-settings" style="display: none;">
+                            <div class="form-group">
+                                <label>Текст поста</label>
+                                <textarea id="preview-caption" rows="8"></textarea>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                                    <span id="caption-char-count" style="color: var(--text-secondary); font-size: 14px;">0 / 2200 символов</span>
+                                    <button id="regenerate-text-btn" class="btn btn-secondary">
+                                        🔄 Создать новый текст
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Управление фотографиями</label>
+                                <div id="preview-photos-container" class="selected-photos"></div>
+                                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                    <button id="generate-another-photo-btn" class="btn btn-secondary">
+                                        ➕ Создать еще фото
+                                    </button>
+                                    <button id="add-from-library-btn" class="btn btn-secondary">
+                                        📚 Добавить из библиотеки
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Preview Display -->
+                        <div class="post-preview-display">
+                            <div class="preview-photos-display" id="preview-photos-display"></div>
+                            <div class="preview-caption-display" id="preview-caption-display"></div>
+                        </div>
+                        
+                        <!-- Publish Button -->
+                        <button id="publish-final-btn" class="btn btn-primary btn-large">
+                            📤 Опубликовать Пост
+                        </button>
+                        <div id="preview-publish-status" class="status-message"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page: Library -->
+        <div id="page-library" class="page">
+            <div class="container">
+                <h2>Библиотека изображений</h2>
+                <div id="library-grid" class="photo-grid"></div>
+            </div>
+        </div>
+
+        <!-- Page: History -->
+        <div id="page-history" class="page">
+            <div class="container">
+                <h2>История постов</h2>
+                <div id="history-list" class="history-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Photo Selection Modal -->
+    <div id="photo-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Выберите изображения</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-photo-grid" class="photo-grid selectable"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="confirm-selection-btn" class="btn btn-primary">Подтвердить выбор</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Photo Detail Modal -->
+    <div id="detail-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Детали изображения</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <img id="detail-image" src="" alt="">
+                <div id="detail-prompt" class="detail-info"></div>
+                <div id="detail-timestamp" class="detail-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="confirm-modal">
+        <div class="confirm-content">
+            <h3>Подтверждение публикации</h3>
+            <p>Вы уверены, что хотите опубликовать этот пост в Instagram?</p>
+            <div class="confirm-buttons">
+                <button id="confirm-yes" class="btn btn-primary">Да, опубликовать</button>
+                <button id="confirm-no" class="btn btn-secondary">Нет, отменить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
+
