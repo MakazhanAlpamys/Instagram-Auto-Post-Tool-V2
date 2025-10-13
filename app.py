@@ -166,6 +166,8 @@ def generate_photo():
             with open(metadata_file, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             
+            print(f"Сохранены метаданные для {filename}: prompt='{prompt[:50] if prompt else '(пусто)'}...'")  # Логирование
+            
             return jsonify({
                 'success': True,
                 'filename': filename,
@@ -188,8 +190,11 @@ def list_photos():
             metadata_file = photo_file.with_suffix('.json')
             metadata = {}
             if metadata_file.exists():
-                with open(metadata_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                except Exception as e:
+                    print(f"Ошибка чтения метаданных для {photo_file.name}: {e}")
             
             photos.append({
                 'filename': photo_file.name,

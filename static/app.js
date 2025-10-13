@@ -562,6 +562,11 @@ async function loadLibrary() {
         
         if (data.success) {
             allPhotos = data.photos;
+            // Логирование для отладки промптов
+            console.log('Загружено фотографий:', data.photos.length);
+            data.photos.forEach((photo, idx) => {
+                console.log(`Фото ${idx + 1}: ${photo.filename}, промпт: "${photo.prompt || '(пусто)'}"`);
+            });
             displayLibrary(data.photos);
         }
     } catch (error) {
@@ -577,20 +582,37 @@ function displayLibrary(photos) {
         return;
     }
     
-    grid.innerHTML = photos.map(photo => `
-        <div class="photo-item" onclick='showPhotoDetail(${JSON.stringify(photo.filename)}, ${JSON.stringify(photo.prompt || 'Промпт недоступен')}, ${JSON.stringify(photo.timestamp || '')})'>
+    grid.innerHTML = photos.map((photo, index) => `
+        <div class="photo-item" data-photo-index="${index}">
             <img src="${photo.url}" alt="${photo.filename}">
             <div class="photo-info">
                 <div>${formatTimestamp(photo.timestamp)}</div>
             </div>
         </div>
     `).join('');
+    
+    // Добавляем обработчики событий для каждого фото
+    const photoItems = grid.querySelectorAll('.photo-item');
+    photoItems.forEach((item, index) => {
+        item.addEventListener('click', () => {
+            const photo = photos[index];
+            const prompt = (photo.prompt && photo.prompt.trim()) ? photo.prompt : 'Промпт недоступен';
+            showPhotoDetail(photo.filename, prompt, photo.timestamp || '');
+        });
+    });
 }
 
 function showPhotoDetail(filename, prompt, timestamp) {
     const modal = document.getElementById('detail-modal');
     document.getElementById('detail-image').src = `/api/photos/${filename}`;
-    document.getElementById('detail-prompt').innerHTML = `<strong>Промпт:</strong> ${prompt}`;
+    
+    // Безопасное отображение промпта
+    const promptElement = document.getElementById('detail-prompt');
+    promptElement.innerHTML = '<strong>Промпт:</strong> ';
+    const promptText = document.createElement('span');
+    promptText.textContent = prompt;
+    promptElement.appendChild(promptText);
+    
     document.getElementById('detail-timestamp').innerHTML = `<strong>Создано:</strong> ${formatTimestamp(timestamp)}`;
     modal.classList.add('show');
 }
