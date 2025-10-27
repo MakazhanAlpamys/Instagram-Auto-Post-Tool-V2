@@ -21,10 +21,11 @@ CORS(app)
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / 'data'
 PHOTOS_DIR = DATA_DIR / 'photos'
+VIDEOS_DIR = DATA_DIR / 'videos'
 SESSION_DIR = DATA_DIR / 'session'
 POSTS_DIR = DATA_DIR / 'posts'
 
-for directory in [DATA_DIR, PHOTOS_DIR, SESSION_DIR, POSTS_DIR]:
+for directory in [DATA_DIR, PHOTOS_DIR, VIDEOS_DIR, SESSION_DIR, POSTS_DIR]:
     directory.mkdir(exist_ok=True)
 
 # Instagram клиент
@@ -35,6 +36,9 @@ SESSION_FILE = SESSION_DIR / 'instagram_session.json'
 gemini_api_key = os.getenv('GEMINI_API_KEY')
 if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
+
+# Segmind API key (for Kling 2.1)
+segmind_api_key = os.getenv('SEGMIND_API_KEY')
 
 # ==================== INSTAGRAM AUTH ====================
 
@@ -69,7 +73,17 @@ def instagram_login():
         session['instagram_username'] = username
         
         return jsonify({'success': True, 'message': 'Успешный вход в Instagram'})
+    except requests.exceptions.ReadTimeout as e:
+        print(f"❌ Ошибка таймаута при генерации видео: {e}")
+        return jsonify({
+            'success': False, 
+            'error': 'Превышено время ожидания ответа от API Segmind. Генерация видео занимает слишком много времени. Попробуйте еще раз или используйте более короткую длительность видео.'
+        }), 408  # 408 Request Timeout
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка запроса к API Segmind: {e}")
+        return jsonify({'success': False, 'error': f'Ошибка при обращении к API Segmind: {str(e)}'}), 400
     except Exception as e:
+        print(f"❌ Непредвиденная ошибка при генерации видео: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/instagram/status', methods=['GET'])
@@ -175,12 +189,70 @@ def generate_photo():
             })
         else:
             return jsonify({'success': False, 'error': 'Ошибка генерации изображения'}), 400
+    except requests.exceptions.ReadTimeout as e:
+        print(f"❌ Ошибка таймаута при генерации видео: {e}")
+        return jsonify({
+            'success': False, 
+            'error': 'Превышено время ожидания ответа от API Segmind. Генерация видео занимает слишком много времени. Попробуйте еще раз или используйте более короткую длительность видео.'
+        }), 408  # 408 Request Timeout
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка запроса к API Segmind: {e}")
+        return jsonify({'success': False, 'error': f'Ошибка при обращении к API Segmind: {str(e)}'}), 400
     except Exception as e:
+        print(f"❌ Непредвиденная ошибка при генерации видео: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/photos/<filename>')
 def get_photo(filename):
     return send_from_directory(PHOTOS_DIR, filename)
+
+@app.route('/api/upload-photo', methods=['POST'])
+def upload_photo():
+    """Upload custom photo to library"""
+    try:
+        if 'photo' not in request.files:
+            return jsonify({'success': False, 'error': 'Файл не найден'}), 400
+        
+        file = request.files['photo']
+        
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
+        
+        # Проверяем расширение файла
+        allowed_extensions = {'jpg', 'jpeg'}
+        file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+        
+        if file_ext not in allowed_extensions:
+            return jsonify({'success': False, 'error': 'Только JPG/JPEG файлы разрешены'}), 400
+        
+        # Сохраняем фото с именем в формате даты и времени
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{timestamp}.jpg"
+        filepath = PHOTOS_DIR / filename
+        
+        file.save(filepath)
+        
+        # Сохраняем метаданные
+        metadata = {
+            'prompt': 'Загружено пользователем',
+            'type': 'uploaded',
+            'original_filename': file.filename,
+            'timestamp': timestamp
+        }
+        
+        metadata_file = PHOTOS_DIR / f"{timestamp}.json"
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        print(f"Загружено фото: {filename} (оригинал: {file.filename})")
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'url': f'/api/photos/{filename}'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/photos', methods=['GET'])
 def list_photos():
@@ -204,6 +276,212 @@ def list_photos():
             })
         
         return jsonify({'success': True, 'photos': photos})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+# ==================== VIDEO GENERATION ====================
+
+@app.route('/api/generate-video', methods=['POST'])
+def generate_video():
+    if not segmind_api_key:
+        return jsonify({'success': False, 'error': 'Segmind API не настроен. Добавьте SEGMIND_API_KEY в .env файл'}), 400
+    
+    data = request.json
+    prompt = data.get('prompt', 'beautiful animation')
+    seed = data.get('seed', None)
+    duration = data.get('duration', '5')  # '5' or '10'
+    aspect_ratio = data.get('aspect_ratio', '16:9')  # '16:9', '9:16', '1:1'
+    
+    try:
+        # Kling 2.1 API через Segmind (обновленная версия)
+        url = "https://api.segmind.com/v1/kling-2.1-i2v"
+        
+        payload = {
+            'prompt': prompt,
+            'negative_prompt': 'low quality, blurry, distorted, No jittery motion, avoid rapid scene changes.',
+            'cfg_scale': 0.7,
+            'duration': int(duration),
+            'aspect_ratio': aspect_ratio,
+            'mode': 'pro'  # Используем pro режим для лучшего качества
+        }
+        
+        if seed:
+            payload['seed'] = int(seed)
+        
+        headers = {'x-api-key': segmind_api_key}
+        
+        # Увеличиваем таймаут до 600 секунд (10 минут), так как генерация видео может занимать больше времени
+        response = requests.post(url, json=payload, headers=headers, timeout=600)
+        
+        if response.status_code == 200:
+            # Сохраняем видео с именем в формате даты и времени
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{timestamp}.mp4"
+            filepath = VIDEOS_DIR / filename
+            
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            
+            # Сохраняем метаданные
+            metadata = {
+                'prompt': prompt,
+                'aspect_ratio': aspect_ratio,
+                'duration': duration,
+                'seed': seed,
+                'timestamp': timestamp,
+                'type': 'text-to-video',
+                'model': 'kling-2.1-pro'
+            }
+            
+            metadata_file = VIDEOS_DIR / f"{timestamp}.json"
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            print(f"Сохранены метаданные для {filename}: prompt='{prompt[:50] if prompt else '(пусто)'}...'")
+            
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'url': f'/api/videos/{filename}'
+            })
+        else:
+            error_message = response.text if response.text else 'Ошибка генерации видео'
+            return jsonify({'success': False, 'error': error_message}), 400
+    except requests.exceptions.ReadTimeout as e:
+        print(f"❌ Ошибка таймаута при генерации видео: {e}")
+        return jsonify({
+            'success': False, 
+            'error': 'Превышено время ожидания ответа от API Segmind. Генерация видео занимает слишком много времени. Попробуйте еще раз или используйте более короткую длительность видео.'
+        }), 408  # 408 Request Timeout
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка запроса к API Segmind: {e}")
+        return jsonify({'success': False, 'error': f'Ошибка при обращении к API Segmind: {str(e)}'}), 400
+    except Exception as e:
+        print(f"❌ Непредвиденная ошибка при генерации видео: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/generate-image-to-video', methods=['POST'])
+def generate_image_to_video():
+    """Generate video from image using Kling 2.1"""
+    if not segmind_api_key:
+        return jsonify({'success': False, 'error': 'Segmind API не настроен. Добавьте SEGMIND_API_KEY в .env файл'}), 400
+    
+    data = request.json
+    image_filename = data.get('image_filename', '')
+    prompt = data.get('prompt', 'smooth camera movement')
+    seed = data.get('seed', None)
+    duration = data.get('duration', '5')
+    aspect_ratio = data.get('aspect_ratio', '16:9')
+    
+    if not image_filename:
+        return jsonify({'success': False, 'error': 'Не указано изображение'}), 400
+    
+    try:
+        # Проверяем существование файла
+        image_path = PHOTOS_DIR / image_filename
+        if not image_path.exists():
+            return jsonify({'success': False, 'error': f'Изображение не найдено: {image_filename}'}), 400
+        
+        # Читаем изображение и конвертируем в base64
+        import base64
+        with open(image_path, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Kling 2.1 API через Segmind (обновленная версия для image-to-video)
+        url = "https://api.segmind.com/v1/kling-2.1-i2v"
+        
+        payload = {
+            'prompt': prompt,
+            'negative_prompt': 'No jittery motion, avoid rapid scene changes, low quality, blurry, distorted',
+            'ImageURL': f'data:image/jpeg;base64,{image_data}',
+            'cfg_scale': 0.7,
+            'duration': int(duration),
+            'aspect_ratio': aspect_ratio,
+            'mode': 'pro'  # Используем pro режим для лучшего качества
+        }
+        
+        if seed:
+            payload['seed'] = int(seed)
+        
+        headers = {'x-api-key': segmind_api_key}
+        
+        # Увеличиваем таймаут до 600 секунд (10 минут), так как генерация видео может занимать больше времени
+        response = requests.post(url, json=payload, headers=headers, timeout=600)
+        
+        if response.status_code == 200:
+            # Сохраняем видео с именем в формате даты и времени
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{timestamp}.mp4"
+            filepath = VIDEOS_DIR / filename
+            
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            
+            # Сохраняем метаданные
+            metadata = {
+                'prompt': prompt,
+                'source_image': image_filename,
+                'aspect_ratio': aspect_ratio,
+                'duration': duration,
+                'seed': seed,
+                'timestamp': timestamp,
+                'type': 'image-to-video',
+                'model': 'kling-2.1-pro'
+            }
+            
+            metadata_file = VIDEOS_DIR / f"{timestamp}.json"
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            print(f"Сохранены метаданные для {filename}: image={image_filename}, prompt='{prompt[:50]}'")
+            
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'url': f'/api/videos/{filename}'
+            })
+        else:
+            error_message = response.text if response.text else 'Ошибка генерации видео из изображения'
+            return jsonify({'success': False, 'error': error_message}), 400
+    except requests.exceptions.ReadTimeout as e:
+        print(f"❌ Ошибка таймаута при генерации видео из изображения: {e}")
+        return jsonify({
+            'success': False, 
+            'error': 'Превышено время ожидания ответа от API Segmind. Генерация видео занимает слишком много времени. Попробуйте еще раз или используйте более короткую длительность видео.'
+        }), 408  # 408 Request Timeout
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Ошибка запроса к API Segmind: {e}")
+        return jsonify({'success': False, 'error': f'Ошибка при обращении к API Segmind: {str(e)}'}), 400
+    except Exception as e:
+        print(f"❌ Непредвиденная ошибка при генерации видео из изображения: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/videos/<filename>')
+def get_video(filename):
+    return send_from_directory(VIDEOS_DIR, filename)
+
+@app.route('/api/videos', methods=['GET'])
+def list_videos():
+    try:
+        videos = []
+        for video_file in sorted(VIDEOS_DIR.glob('*.mp4'), reverse=True):
+            metadata_file = video_file.with_suffix('.json')
+            metadata = {}
+            if metadata_file.exists():
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                except Exception as e:
+                    print(f"Ошибка чтения метаданных для {video_file.name}: {e}")
+            
+            videos.append({
+                'filename': video_file.name,
+                'url': f'/api/videos/{video_file.name}',
+                'prompt': metadata.get('prompt', ''),
+                'timestamp': metadata.get('timestamp', '')
+            })
+        
+        return jsonify({'success': True, 'videos': videos})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
@@ -234,6 +512,45 @@ def generate_prompt():
 ПРИМЕРЫ:
 - Тема: "Немцы великий народ" → "German cultural heritage: traditional Bavarian architecture, beer gardens, historic castles, autumn landscape, warm golden hour lighting, professional photography, vibrant colors, cultural atmosphere"
 - Тема: "Здоровый завтрак" → "Healthy breakfast scene: fresh fruits, avocado toast, smoothie bowl, natural sunlight, minimalist white table, top view, bright and fresh, food photography, instagram style"
+
+Верни ТОЛЬКО промпт на английском, без объяснений и комментариев."""
+        
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        response = model.generate_content(full_prompt)
+        
+        return jsonify({
+            'success': True,
+            'prompt': response.text.strip()
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/api/generate-video-prompt', methods=['POST'])
+def generate_video_prompt():
+    """Generate video prompt based on post topic"""
+    if not gemini_api_key:
+        return jsonify({'success': False, 'error': 'Gemini API не настроен. Добавьте GEMINI_API_KEY в .env файл'}), 400
+    
+    data = request.json
+    topic = data.get('topic', '')
+    
+    try:
+        full_prompt = f"""Ты - эксперт по созданию промптов для генерации видео. На основе следующей темы создай ДИНАМИЧЕСКИЙ промпт на английском языке для AI генератора видео.
+
+ТЕМА ПОСТА: {topic}
+
+ВАЖНО:
+1. Сфокусируйся на ДВИЖЕНИИ и ДЕЙСТВИИ - опиши что происходит в кадре
+2. Укажи движение камеры (camera pans, zooms, tracking shot, etc.) если уместно
+3. Опиши динамическую сцену с действием, движением объектов, изменениями
+4. НЕ включай текст в видео (no text overlay, no words)
+5. Добавь детали: темп движения, освещение, настроение, стиль
+6. Промпт должен быть 30-80 слов
+
+ПРИМЕРЫ:
+- Тема: "Закат на море" → "Cinematic sunset over ocean, waves gently rolling, camera slowly panning left, golden hour lighting, seagulls flying across frame, peaceful atmosphere, warm colors, smooth motion"
+- Тема: "Городская жизнь" → "Busy city street time-lapse, people walking fast, cars moving, camera tracking forward, urban energy, evening lights turning on, dynamic movement, modern cityscape"
+- Тема: "Природа весной" → "Spring meadow with flowers swaying in breeze, butterflies flying, camera dolly forward through grass, soft sunlight, green and colorful, gentle motion, fresh atmosphere"
 
 Верни ТОЛЬКО промпт на английском, без объяснений и комментариев."""
         
@@ -343,29 +660,41 @@ def publish_post():
     data = request.json
     caption = data.get('caption', '')
     photo_filenames = data.get('photos', [])
+    video_filenames = data.get('videos', [])
     
-    if not photo_filenames:
-        return jsonify({'success': False, 'error': 'Не выбраны фотографии'}), 400
+    if not photo_filenames and not video_filenames:
+        return jsonify({'success': False, 'error': 'Не выбраны фотографии или видео'}), 400
     
     try:
         photo_paths = [str(PHOTOS_DIR / filename) for filename in photo_filenames]
+        video_paths = [str(VIDEOS_DIR / filename) for filename in video_filenames]
         
         # Проверяем существование файлов
-        for path in photo_paths:
+        for path in photo_paths + video_paths:
             if not Path(path).exists():
                 return jsonify({'success': False, 'error': f'Файл не найден: {path}'}), 400
         
         # Публикуем пост
-        if len(photo_paths) == 1:
+        media = None
+        
+        # Если только одно видео
+        if len(video_paths) == 1 and len(photo_paths) == 0:
+            media = ig_client.video_upload(video_paths[0], caption)
+        # Если только одно фото
+        elif len(photo_paths) == 1 and len(video_paths) == 0:
             media = ig_client.photo_upload(photo_paths[0], caption)
+        # Если альбом (микс фото и видео)
         else:
-            media = ig_client.album_upload(photo_paths, caption)
+            # Instagram поддерживает альбомы с миксом фото и видео
+            all_paths = photo_paths + video_paths
+            media = ig_client.album_upload(all_paths, caption)
         
         # Сохраняем в историю
         post_data = {
             'id': media.pk,
             'caption': caption,
             'photos': photo_filenames,
+            'videos': video_filenames,
             'timestamp': datetime.now().isoformat(),
             'username': session.get('instagram_username')
         }
