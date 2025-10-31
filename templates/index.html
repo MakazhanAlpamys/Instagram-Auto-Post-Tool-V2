@@ -266,10 +266,15 @@
                             <div class="preview-caption-display" id="preview-caption-display"></div>
                         </div>
                         
-                        <!-- Publish Button -->
-                        <button id="publish-final-btn" class="btn btn-primary btn-large">
-                            📤 Опубликовать Пост
-                        </button>
+                        <!-- Publish Buttons -->
+                        <div style="display: flex; gap: 15px; margin-top: 20px;">
+                            <button id="publish-final-btn" class="btn btn-primary btn-large" style="flex: 1;">
+                                📤 Опубликовать Пост
+                            </button>
+                            <button id="schedule-post-btn" class="btn btn-secondary btn-large" style="flex: 1;">
+                                📅 Запланировать Пост
+                            </button>
+                        </div>
                         <div id="preview-publish-status" class="status-message"></div>
                     </div>
                 </div>
@@ -513,6 +518,30 @@
             <div class="confirm-buttons">
                 <button id="confirm-yes" class="btn btn-primary">Да, опубликовать</button>
                 <button id="confirm-no" class="btn btn-secondary">Нет, отменить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Post Modal -->
+    <div id="schedule-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📅 Запланировать публикацию</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 20px; color: var(--text-secondary);">
+                    Выберите дату и время для автоматической публикации поста
+                </p>
+                <div class="form-group">
+                    <label>Дата и время публикации</label>
+                    <input type="datetime-local" id="schedule-datetime" class="input" required>
+                </div>
+                <div id="schedule-status" class="status-message"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="schedule-confirm-btn" class="btn btn-primary">📅 Запланировать</button>
+                <button id="schedule-cancel-btn" class="btn btn-secondary">Отмена</button>
             </div>
         </div>
     </div>

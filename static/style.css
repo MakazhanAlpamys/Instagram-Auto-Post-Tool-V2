@@ -308,6 +308,21 @@ textarea {
     background: rgba(168, 85, 247, 0.1);
     color: var(--primary-light);
     border: 1px solid var(--primary-light);
+    display: flex !important;
+    align-items: center;
+    gap: 12px;
+}
+
+.status-message.loading::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(168, 85, 247, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--primary-light);
+    animation: spin 1s linear infinite;
+    flex-shrink: 0;
 }
 
 /* Photo Grid */

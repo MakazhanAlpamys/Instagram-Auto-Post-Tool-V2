@@ -260,7 +260,7 @@ document.getElementById('generate-post-btn').addEventListener('click', async () 
                 }
             }
             
-            showStatus(statusDiv, '🎥 Генерация видео (это может занять 1-2 минуты)...', 'loading');
+            showStatus(statusDiv, '🎥 Генерация видео (это займет 5-15 минут, будьте терпеливы)...', 'loading');
             const videoData = await generatePostVideo(videoPrompt);
             generatedMedia.push({ type: 'video', ...videoData });
         }
@@ -693,6 +693,103 @@ function resetPostCreation() {
     document.getElementById('publish-final-btn').textContent = '📤 Опубликовать Пост';
 }
 
+// ==================== SCHEDULE POST ====================
+
+// Schedule post button
+document.getElementById('schedule-post-btn').addEventListener('click', () => {
+    // Set minimum datetime to current time
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 5); // Минимум 5 минут в будущем
+    const minDatetime = now.toISOString().slice(0, 16);
+    document.getElementById('schedule-datetime').setAttribute('min', minDatetime);
+    
+    // Clear previous values
+    document.getElementById('schedule-datetime').value = '';
+    document.getElementById('schedule-status').textContent = '';
+    document.getElementById('schedule-status').className = 'status-message';
+    
+    // Show modal
+    document.getElementById('schedule-modal').classList.add('show');
+});
+
+// Schedule cancel button
+document.getElementById('schedule-cancel-btn').addEventListener('click', () => {
+    document.getElementById('schedule-modal').classList.remove('show');
+});
+
+// Schedule confirm button
+document.getElementById('schedule-confirm-btn').addEventListener('click', async () => {
+    const caption = document.getElementById('preview-caption').value.trim();
+    const photoFilenames = previewMedia.filter(m => m.type === 'photo').map(m => m.filename);
+    const videoFilenames = previewMedia.filter(m => m.type === 'video').map(m => m.filename);
+    const scheduledTime = document.getElementById('schedule-datetime').value;
+    
+    if (!scheduledTime) {
+        showStatus(document.getElementById('schedule-status'), 'Выберите дату и время', 'error');
+        return;
+    }
+    
+    if (photoFilenames.length === 0 && videoFilenames.length === 0) {
+        showStatus(document.getElementById('schedule-status'), 'Добавьте хотя бы одно фото или видео', 'error');
+        return;
+    }
+    
+    // Проверка на лимит Instagram
+    if (caption.length > 2200) {
+        showStatus(document.getElementById('schedule-status'), `Текст слишком длинный! Лимит: 2200 символов.`, 'error');
+        return;
+    }
+    
+    const btn = document.getElementById('schedule-confirm-btn');
+    const statusDiv = document.getElementById('schedule-status');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading"></span> Планирование...';
+    showStatus(statusDiv, 'Планирование поста...', 'loading');
+    
+    try {
+        // Формируем ISO строку из локального времени (не конвертируем в UTC!)
+        // datetime-local возвращает формат YYYY-MM-DDTHH:mm
+        // Добавляем секунды для полного ISO формата
+        const scheduledTimeISO = scheduledTime + ':00';
+        
+        console.log('Запланированное время (локальное):', scheduledTimeISO);
+        
+        const response = await fetch('/api/schedule-post', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                caption,
+                photos: photoFilenames,
+                videos: videoFilenames,
+                scheduled_time: scheduledTimeISO
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showStatus(statusDiv, '✅ ' + data.message, 'success');
+            
+            // Close modal and reset after 2 seconds
+            setTimeout(() => {
+                document.getElementById('schedule-modal').classList.remove('show');
+                btn.disabled = false;
+                btn.textContent = '📅 Запланировать';
+                resetPostCreation();
+            }, 2000);
+        } else {
+            showStatus(statusDiv, '❌ ' + (data.error || 'Ошибка планирования'), 'error');
+            btn.disabled = false;
+            btn.textContent = '📅 Запланировать';
+        }
+    } catch (error) {
+        showStatus(statusDiv, '❌ Ошибка подключения к серверу', 'error');
+        btn.disabled = false;
+        btn.textContent = '📅 Запланировать';
+    }
+});
+
 // ==================== OLD PAGES (REMOVED) ====================
 // Photo generation, text generation, and publish pages have been combined into unified post creation
 
@@ -897,6 +994,26 @@ function displayHistory(posts) {
     container.innerHTML = posts.map(post => {
         const photos = post.photos || [];
         const videos = post.videos || [];
+        const status = post.status || 'published';
+        
+        // Определяем дату и статус
+        let dateDisplay = '';
+        let statusBadge = '';
+        
+        if (status === 'scheduled') {
+            const scheduledDate = new Date(post.scheduled_time);
+            dateDisplay = `Запланировано на: ${scheduledDate.toLocaleString('ru-RU')}`;
+            statusBadge = '<span style="background: var(--tertiary); color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">📅 ЗАПЛАНИРОВАН</span>';
+        } else {
+            // Используем published_time если есть, иначе timestamp
+            const publishedTime = post.published_time || post.timestamp;
+            if (publishedTime) {
+                dateDisplay = `Опубликовано: ${formatDateTime(publishedTime)}`;
+            } else {
+                dateDisplay = `Опубликовано: неизвестно`;
+            }
+            statusBadge = '<span style="background: var(--success); color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">✅ ОПУБЛИКОВАН</span>';
+        }
         
         const mediaHTML = [
             ...photos.map(photo => `
@@ -914,7 +1031,8 @@ function displayHistory(posts) {
         return `
             <div class="history-item">
                 <div class="history-header">
-                    <div class="history-date">${formatDateTime(post.timestamp)}</div>
+                    <div class="history-date">${dateDisplay}</div>
+                    ${statusBadge}
                 </div>
                 <div class="history-caption">${escapeHtml(post.caption) || '<em>Без текста</em>'}</div>
                 <div class="history-photos">
@@ -959,8 +1077,18 @@ function formatTimestamp(timestamp) {
 }
 
 function formatDateTime(isoString) {
-    const date = new Date(isoString);
-    return date.toLocaleString('ru-RU');
+    if (!isoString) return 'неизвестно';
+    
+    try {
+        const date = new Date(isoString);
+        // Проверяем, что дата валидна
+        if (isNaN(date.getTime())) {
+            return 'неверная дата';
+        }
+        return date.toLocaleString('ru-RU');
+    } catch (e) {
+        return 'ошибка даты';
+    }
 }
 
 function escapeHtml(text) {
@@ -1066,7 +1194,7 @@ document.getElementById('content-generate-video-btn').addEventListener('click', 
     
     btn.disabled = true;
     btn.innerHTML = '<span class="loading"></span> Генерация...';
-    showStatus(statusDiv, '🎥 Создание видео через Kling 2.1 Pro (это займет 1-2 минуты)...', 'loading');
+    showStatus(statusDiv, '🎥 Создание видео через Kling AI Standard (это займет 5-15 минут, будьте терпеливы)...', 'loading');
     previewDiv.style.display = 'none';
     
     try {
@@ -1181,7 +1309,7 @@ document.getElementById('i2v-generate-btn').addEventListener('click', async () =
     
     btn.disabled = true;
     btn.innerHTML = '<span class="loading"></span> Генерация...';
-    showStatus(statusDiv, '🎬 Создание видео из изображения через Kling 2.1 Pro (это займет 1-2 минуты)...', 'loading');
+    showStatus(statusDiv, '🎬 Создание видео из изображения через Kling AI Standard (это займет 5-15 минут, будьте терпеливы)...', 'loading');
     previewDiv.style.display = 'none';
     
     try {
