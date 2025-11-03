@@ -34,7 +34,18 @@ for directory in [DATA_DIR, PHOTOS_DIR, VIDEOS_DIR, SESSION_DIR, POSTS_DIR, SCHE
 
 # Instagram клиент
 ig_client = None
-SESSION_FILE = SESSION_DIR / 'instagram_session.json'
+
+# Работа с per-username сессиями
+def get_session_file(username: str) -> Path:
+    safe_username = re.sub(r'[^A-Za-z0-9_.-]+', '_', username or '')
+    return SESSION_DIR / f'{safe_username}.json'
+
+def load_client_for_username(username: str) -> Client:
+    client = Client()
+    session_file = get_session_file(username)
+    if session_file.exists():
+        client.load_settings(session_file)
+    return client
 
 # Gemini клиент
 gemini_api_key = os.getenv('GEMINI_API_KEY')
@@ -105,21 +116,18 @@ def check_and_publish_scheduled_posts():
                 # Время пришло - публикуем
                 print(f"⏰ Публикация запланированного поста: {scheduled_file.name}")
                 
-                # Восстанавливаем сессию если нужно
-                if not ig_client and SESSION_FILE.exists():
-                    try:
-                        ig_client = Client()
-                        ig_client.load_settings(SESSION_FILE)
-                    except Exception as e:
-                        print(f"❌ Ошибка восстановления сессии для автопубликации: {e}")
-                        # Возвращаем файл обратно, чтобы попробовать позже
-                        with open(scheduled_file, 'w', encoding='utf-8') as f:
-                            json.dump(post_data, f, ensure_ascii=False, indent=2)
-                        continue
-                
-                if not ig_client:
-                    print(f"❌ Нет активной сессии Instagram для публикации {scheduled_file.name}")
+                # Готовим клиент для username поста
+                post_username = post_data.get('username')
+                if not post_username:
+                    print(f"❌ В запланированном посте нет username: {scheduled_file.name}")
                     # Возвращаем файл обратно
+                    with open(scheduled_file, 'w', encoding='utf-8') as f:
+                        json.dump(post_data, f, ensure_ascii=False, indent=2)
+                    continue
+                try:
+                    local_client = load_client_for_username(post_username)
+                except Exception as e:
+                    print(f"❌ Ошибка загрузки сессии для {post_username}: {e}")
                     with open(scheduled_file, 'w', encoding='utf-8') as f:
                         json.dump(post_data, f, ensure_ascii=False, indent=2)
                     continue
@@ -135,12 +143,12 @@ def check_and_publish_scheduled_posts():
                 # Публикуем
                 media = None
                 if len(video_paths) == 1 and len(photo_paths) == 0:
-                    media = ig_client.video_upload(video_paths[0], caption)
+                    media = local_client.video_upload(video_paths[0], caption)
                 elif len(photo_paths) == 1 and len(video_paths) == 0:
-                    media = ig_client.photo_upload(photo_paths[0], caption)
+                    media = local_client.photo_upload(photo_paths[0], caption)
                 else:
                     all_paths = photo_paths + video_paths
-                    media = ig_client.album_upload(all_paths, caption)
+                    media = local_client.album_upload(all_paths, caption)
                 
                 # Обновляем статус и сохраняем в историю
                 post_data['status'] = 'published'
@@ -187,28 +195,22 @@ def instagram_login():
     verification_code = data.get('verification_code', None)  # Новое
     
     try:
-        ig_client = Client()
-        
-        # Пытаемся загрузить существующую сессию
-        if SESSION_FILE.exists():
-            try:
-                ig_client.load_settings(SESSION_FILE)
-                ig_client.login(username, password)
-                session['instagram_logged_in'] = True
-                session['instagram_username'] = username
-                return jsonify({'success': True, 'message': 'Вход выполнен с использованием сохраненной сессии'})
-            except Exception as e:
-                print(f"Ошибка загрузки сессии: {e}")
-        
-        # Если не удалось загрузить сессию, делаем новый вход
+        if not username or not password:
+            return jsonify({'success': False, 'error': 'Укажите username и пароль'}), 400
+
+        # Загружаем сессию только для ЭТОГО username
+        ig_client = load_client_for_username(username)
+
+        # Выполняем вход. Instagrapi сам решит использовать куки/двухфакторку.
         ig_client.login(username, password, verification_code=verification_code)
-        
-        # Сохраняем сессию
-        ig_client.dump_settings(SESSION_FILE)
-        
+
+        # Сохраняем настройки строго в файл этого пользователя
+        session_file = get_session_file(username)
+        ig_client.dump_settings(session_file)
+
         session['instagram_logged_in'] = True
         session['instagram_username'] = username
-        
+
         return jsonify({'success': True, 'message': 'Успешный вход в Instagram'})
     except Exception as e:
         error_str = str(e)
@@ -228,32 +230,7 @@ def instagram_login():
 def instagram_status():
     global ig_client
     
-    # Пытаемся восстановить сессию из файла, если она потеряна
-    if not session.get('instagram_logged_in') and SESSION_FILE.exists():
-        try:
-            # Загружаем сохраненную сессию
-            with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-                username = settings.get('username', '')
-                
-            if username:
-                ig_client = Client()
-                ig_client.load_settings(SESSION_FILE)
-                
-                # Проверяем, что сессия действительна
-                try:
-                    ig_client.get_timeline_feed()  # Простой запрос для проверки
-                    session['instagram_logged_in'] = True
-                    session['instagram_username'] = username
-                    return jsonify({
-                        'logged_in': True,
-                        'username': username
-                    })
-                except Exception:
-                    # Сессия устарела
-                    ig_client = None
-        except Exception:
-            pass
+    # НИКАКОГО авто-восстановления из чужих сессий. Только текущее состояние.
     
     if session.get('instagram_logged_in'):
         return jsonify({
@@ -265,8 +242,8 @@ def instagram_status():
 @app.route('/api/instagram/logout', methods=['POST'])
 def instagram_logout():
     global ig_client
-    session.pop('instagram_logged_in', None)
-    session.pop('instagram_username', None)
+    # Полностью очищаем Flask-сессию
+    session.clear()
     ig_client = None
     return jsonify({'success': True, 'message': 'Выход выполнен'})
 
@@ -895,26 +872,17 @@ def generate_text():
 def publish_post():
     global ig_client
     
-    # Пытаемся восстановить соединение, если оно потеряно
-    if not ig_client and SESSION_FILE.exists():
-        try:
-            ig_client = Client()
-            ig_client.load_settings(SESSION_FILE)
-            
-            # Загружаем username из сессии
-            with open(SESSION_FILE, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-                username = settings.get('username', '')
-            
-            if username:
-                session['instagram_logged_in'] = True
-                session['instagram_username'] = username
-        except Exception as e:
-            print(f"Ошибка восстановления сессии: {e}")
-            return jsonify({'success': False, 'error': 'Не выполнен вход в Instagram. Пожалуйста, войдите снова.'}), 401
-    
-    if not ig_client:
+    # Должны быть выполнены вход и выбран текущий аккаунт
+    current_username = session.get('instagram_username')
+    if not session.get('instagram_logged_in') or not current_username:
         return jsonify({'success': False, 'error': 'Не выполнен вход в Instagram. Пожалуйста, войдите снова.'}), 401
+    
+    # Поднимаем клиент для текущего аккаунта, если глобальный не соответствует/отсутствует
+    try:
+        ig_client_local = load_client_for_username(current_username)
+    except Exception as e:
+        print(f"Ошибка загрузки клиента для {current_username}: {e}")
+        return jsonify({'success': False, 'error': 'Не удалось загрузить сессию текущего аккаунта'}), 401
     
     data = request.json
     caption = data.get('caption', '')
@@ -938,15 +906,15 @@ def publish_post():
         
         # Если только одно видео
         if len(video_paths) == 1 and len(photo_paths) == 0:
-            media = ig_client.video_upload(video_paths[0], caption)
+            media = ig_client_local.video_upload(video_paths[0], caption)
         # Если только одно фото
         elif len(photo_paths) == 1 and len(video_paths) == 0:
-            media = ig_client.photo_upload(photo_paths[0], caption)
+            media = ig_client_local.photo_upload(photo_paths[0], caption)
         # Если альбом (микс фото и видео)
         else:
             # Instagram поддерживает альбомы с миксом фото и видео
             all_paths = photo_paths + video_paths
-            media = ig_client.album_upload(all_paths, caption)
+            media = ig_client_local.album_upload(all_paths, caption)
         
         # Сохраняем в историю
         post_data = {
